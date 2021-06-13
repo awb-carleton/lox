@@ -63,12 +63,18 @@ fn run(source: &str) -> bool {
             cause,
             line,
             position,
-            c,
         }) => {
             match cause {
-                scanner::ScanErrorType::BadChar => {
+                scanner::ScanErrorType::BadChar(c) => {
                     error(line, format!("Unexpected character {} at {}", c, position))
                 }
+                scanner::ScanErrorType::UnterminatedString(s) => {
+                    error(line, format!("Unterminated string {} at {}", s, position))
+                }
+                scanner::ScanErrorType::NumberParseError(s, e) => error(
+                    line,
+                    format!("Could not parse {} as a number at {} ({})", s, position, e),
+                ),
             }
             return false;
         }

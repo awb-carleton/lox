@@ -1,7 +1,32 @@
 use crate::token::Literal;
 use crate::token::Token;
 use crate::token::TokenType;
+use lazy_static::lazy_static;
+use std::collections::HashMap;
 use std::str::Chars;
+
+lazy_static! {
+    static ref KEYWORDS: HashMap<&'static str, TokenType> = {
+        let mut map = HashMap::new();
+        map.insert("and", TokenType::And);
+        map.insert("class", TokenType::Class);
+        map.insert("else", TokenType::Else);
+        map.insert("false", TokenType::False);
+        map.insert("for", TokenType::For);
+        map.insert("fun", TokenType::Fun);
+        map.insert("if", TokenType::If);
+        map.insert("nil", TokenType::Nil);
+        map.insert("or", TokenType::Or);
+        map.insert("print", TokenType::Print);
+        map.insert("return", TokenType::Return);
+        map.insert("super", TokenType::Super);
+        map.insert("this", TokenType::This);
+        map.insert("true", TokenType::True);
+        map.insert("var", TokenType::Var);
+        map.insert("while", TokenType::While);
+        map
+    };
+}
 
 #[derive(Debug)]
 struct ScanState<'a> {
@@ -127,7 +152,7 @@ fn scan_token(state: &mut ScanState) -> Result<Token, ScanError> {
             }
             '"' => parse_string(state),
             '0'..='9' => parse_number(c, state),
-            'a'..='Z' | '_' => parse_ident(c, state),
+            '_' | 'A'..='z' => parse_ident(c, state),
             _ => Err(ScanError {
                 cause: ScanErrorType::BadChar(c),
                 line: state.line,
@@ -175,7 +200,7 @@ fn parse_number(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
                 _ => {
                     break;
                 }
-            }
+            },
             None => {
                 break;
             }
@@ -198,15 +223,25 @@ fn parse_number(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
 
 fn parse_ident(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
     let mut s = String::from(c);
-    while let Some(i) = state.peek() {
-        match i {
-            'a'..='Z' | '0'..='9' | '_' => s.push(i),
-            _ => {
-                // TODO look up s in statis map of reserved words
-                // return the associated token or an identifier token
+    loop {
+        match state.peek() {
+            Some(i) => match i {
+                '_' | 'A'..='z' | '0'..='9' => s.push(i),
+                _ => {
+                    // TODO look up s in statis map of reserved words
+                    // return the associated token or an identifier token
+                    break;
+                }
+            },
+            None => {
+                break;
             }
         }
         state.advance();
+    }
+    match KEYWORDS.contains_key(s.as_str()) {
+        true => Ok(make_token(*KEYWORDS.get(s.as_str()).unwrap(), None, state)),
+        false => Ok(make_token(TokenType::Identifier, None, state)),
     }
 }
 

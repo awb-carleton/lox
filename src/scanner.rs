@@ -170,7 +170,7 @@ fn parse_string(state: &mut ScanState) -> Result<Token, ScanError> {
                 state.advance();
                 return Ok(make_token(
                     TokenType::String,
-                    Some(Literal::String(s)),
+                    Some(Literal::String(s.into_boxed_str())),
                     state,
                 ));
             }

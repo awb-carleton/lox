@@ -2,9 +2,11 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
-mod parser;
+pub mod parser;
 mod scanner;
 pub mod token;
+mod interpreter;
+use crate::interpreter::evaluate;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -56,11 +58,19 @@ fn run_prompt() -> () {
 fn run(source: &str) -> bool {
     match scanner::scan_tokens(source) {
         Ok(tokens) => {
-            for token in &tokens[..] {
-                println!("{:?}", token);
-            }
+            // for token in &tokens[..] {
+            //     println!("{:?}", token);
+            // }
             match parser::parse(&tokens[..]) {
-                Ok(expr) => println!("{}", parser::expr_to_str(expr)),
+                Ok(expr) => {
+                    match evaluate(&expr) {
+                        Ok(val) => println!("{}", val),
+                        Err(interpreter::RuntimeError{
+                            expr,
+                            message
+                        }) => println!("{}: {}", message, expr)
+                    }
+                }
                 Err(parser::ParseError {
                     cause,
                     token,

@@ -59,7 +59,7 @@ pub enum TokenType {
 
 #[derive(Debug)]
 pub enum Literal {
-    String(String),
+    String(Box<str>),
     Number(f64),
 }
 

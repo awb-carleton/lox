@@ -2,6 +2,7 @@ use crate::token::Literal;
 use crate::token::Token;
 use crate::token::TokenType;
 
+#[derive(Debug)]
 pub enum Expr<'a> {
     Literal(&'a Token),
     Grouping(Box<Expr<'a>>),
@@ -38,7 +39,8 @@ macro_rules! parenthesize {
     }
 }
 
-pub fn expr_to_str(expr: Expr) -> String {
+#[allow(dead_code)]
+pub fn expr_to_str(expr: &Expr) -> String {
     let mut s = String::new();
     match expr {
         Expr::Literal(t) => {
@@ -53,13 +55,13 @@ pub fn expr_to_str(expr: Expr) -> String {
             }
         }
         Expr::Grouping(expr) => {
-            s.push_str(&parenthesize!(" group", expr_to_str(*expr)))
+            s.push_str(&parenthesize!(" group", expr_to_str(expr)))
         }
         Expr::Unary(t, expr) => {
-            s.push_str(&parenthesize!(t.lexeme, expr_to_str(*expr)))
+            s.push_str(&parenthesize!(t.lexeme, expr_to_str(expr)))
         }
         Expr::Binary(left, op, right) => {
-            s.push_str(&parenthesize!(op.lexeme, expr_to_str(*left), expr_to_str(*right)))
+            s.push_str(&parenthesize!(op.lexeme, expr_to_str(left), expr_to_str(right)))
         }
     }
     s

@@ -5,7 +5,6 @@ use std::path::Path;
 mod parser;
 mod scanner;
 pub mod token;
-use crate::parser::*;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -57,10 +56,21 @@ fn run_prompt() -> () {
 fn run(source: &str) -> bool {
     match scanner::scan_tokens(source) {
         Ok(tokens) => {
-            match parse(&tokens[..]) {
-                Ok(expr) => println!("{}", expr_to_str(expr)),
-                Err(ParseError::Incomplete(msg)) => println!("parse error: {}", msg),
-                Err(ParseError::Invalid) => println!("parse error: invalid token"),
+            for token in &tokens[..] {
+                println!("{:?}", token);
+            }
+            match parser::parse(&tokens[..]) {
+                Ok(expr) => println!("{}", parser::expr_to_str(expr)),
+                Err(parser::ParseError {
+                    cause,
+                    token,
+                    message,
+                }) => {
+                    match token {
+                        Some(token) => error(token.line, format!("parser error type {:?} on {:?}: {}", cause, token, message)),
+                        None => error(-1, format!("parser error type {:?} on {:?}: {}", cause, token, message))
+                    }
+                }
             }
         }
         Err(scanner::ScanError {

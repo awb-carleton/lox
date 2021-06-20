@@ -10,9 +10,16 @@ pub enum Expr<'a> {
 }
 
 #[derive(Debug)]
-pub enum ParseError {
-    Incomplete(String),
+pub enum ParseErrorType {
+    Incomplete,
     Invalid
+}
+
+#[derive(Debug)]
+pub struct ParseError<'a> {
+    pub cause: ParseErrorType,
+    pub token: Option<&'a Token>,
+    pub message: String
 }
 
 macro_rules! parenthesize {
@@ -59,6 +66,7 @@ pub fn expr_to_str(expr: Expr) -> String {
 }
 
 pub fn parse(tokens: &[Token]) -> Result<Expr, ParseError> {
+    // TODO handle error and consume tokens until next statement
     let (expr, _) = expression(tokens)?;
     Ok(expr)
 }
@@ -67,94 +75,57 @@ fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
     equality(tokens)
 }
 
+macro_rules! parse_binary_expr {
+    ($tokens:ident, $cur_fn:expr, $precedent_fn:ident, $token_type:path, $($token_types:path),*) => {
+        {
+            let (mut expr, mut remaining) = $precedent_fn($tokens)?;
+
+            loop {
+                match remaining.first() {
+                    $( Some(token @ Token {token_type: $token_types, ..}) | )*
+                    Some(token @ Token {token_type: $token_type, ..}) => {
+                        let (_, rest) = remaining.split_first().unwrap();
+                        if let Ok(temp) = $precedent_fn(rest) {
+                            remaining = temp.1;
+                            expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
+                        } else {
+                            return Err(ParseError {
+                                cause: ParseErrorType::Incomplete, 
+                                token: Some(token),
+                                message: format!("could not parse right hand side of {}", $cur_fn)
+                            });
+                        }
+                    }
+                    _ => { return Ok((expr, remaining)); }
+                }
+            }
+        }
+    };
+}
+
 fn equality(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
     // match COMPARISON (!= | == COMPARISON)*
 
-    let (mut expr, mut remaining) = comparison(tokens)?;
-
-    loop {
-        match remaining.first() {
-            Some(token @ Token {token_type: TokenType::BangEqual, ..}) |
-            Some(token @ Token {token_type: TokenType::EqualEqual, ..}) => {
-                if let Some((_, rest)) = remaining.split_first() {
-                    let temp = comparison(rest)?;
-                    remaining = temp.1;
-                    expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
-                } else {
-                    return Err(ParseError::Incomplete(format!("found equality with no right-hand expression {:?}", tokens)));
-                }
-            }
-            _ => { return Ok((expr, remaining)); }
-        }
-    }
+    parse_binary_expr!(tokens, "equality", comparison, TokenType::BangEqual, TokenType::EqualEqual)
 }
 
 fn comparison(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
     // match TERM (< | <= | > | >= TERM)*
 
-    let (mut expr, mut remaining) = term(tokens)?;
-
-    loop {
-        match remaining.first() {
-            Some(token @ Token {token_type: TokenType::Less, ..}) |
-            Some(token @ Token {token_type: TokenType::LessEqual, ..}) |
-            Some(token @ Token {token_type: TokenType::Greater, ..}) |
-            Some(token @ Token {token_type: TokenType::GreaterEqual, ..}) => {
-                if let Some((_, rest)) = remaining.split_first() {
-                    let temp = term(rest)?;
-                    remaining = temp.1;
-                    expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
-                } else {
-                    return Err(ParseError::Incomplete(format!("found comparison with no right-hand expression {:?}", tokens)));
-                }
-            }
-            _ => { return Ok((expr, remaining)); }
-        }
-    }
+    parse_binary_expr!(tokens, "comparison", term, TokenType::Less, TokenType::LessEqual, 
+        TokenType::Greater, TokenType::GreaterEqual)
 }
 
 fn term(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
     // match FACTOR (+ | - FACTOR)*
 
-    let (mut expr, mut remaining) = factor(tokens)?;
-
-    loop {
-        match remaining.first() {
-            Some(token @ Token {token_type: TokenType::Minus, ..}) |
-            Some(token @ Token {token_type: TokenType::Plus, ..}) => {
-                if let Some((_, rest)) = remaining.split_first() {
-                    let temp = factor(rest)?;
-                    remaining = temp.1;
-                    expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
-                } else {
-                    return Err(ParseError::Incomplete(format!("found term with no right-hand expression {:?}", tokens)));
-                }
-            }
-            _ => { return Ok((expr, remaining)); }
-        }
-    }
+    parse_binary_expr!(tokens, "term", factor, TokenType::Minus, TokenType::Plus)    
 }
 
 fn factor(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
     // match UNARY (* | / UNARY)*
 
-    let (mut expr, mut remaining) = unary(tokens)?;
-
-    loop {
-        match remaining.first() {
-            Some(token @ Token {token_type: TokenType::Star, ..}) |
-            Some(token @ Token {token_type: TokenType::Slash, ..}) => {
-                if let Some((_, rest)) = remaining.split_first() {
-                    let temp = unary(rest)?;
-                    remaining = temp.1;
-                    expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
-                } else {
-                    return Err(ParseError::Incomplete(format!("found factor with no right-hand expression {:?}", tokens)));
-                }
-            }
-            _ => { return Ok((expr, remaining)); }
-        }
-    }
+    parse_binary_expr!(tokens, "factor", unary, TokenType::Star, TokenType::Slash)
 }
 
 fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
@@ -167,7 +138,11 @@ fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
                 let (right, remaining) = unary(rest)?;
                 return Ok((Expr::Unary(token, Box::new(right)), remaining));
             } else {
-                return Err(ParseError::Incomplete(format!("found factor with no right-hand expression {:?}", tokens)));
+                return Err(ParseError {
+                    cause: ParseErrorType::Incomplete, 
+                    token: Some(token),
+                    message: format!("found unary with no right-hand expression")
+                });
             }
         }
         _ => { return primary(tokens); }
@@ -183,18 +158,35 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
         Some((token @ Token {token_type: TokenType::Nil, ..}, rest))    |
         Some((token @ Token {token_type: TokenType::Number, ..}, rest)) |
         Some((token @ Token {token_type: TokenType::String, ..}, rest)) => Ok((Expr::Literal(token), rest)),
-        Some((Token {token_type: TokenType::LeftParen, ..}, rest)) => {
+        Some((token @ Token {token_type: TokenType::LeftParen, ..}, rest)) => {
             let (expr, remaining) = expression(rest)?;
             if let Some((next, remaining_trimmed)) = remaining.split_first() {
                 if matches!(next.token_type, TokenType::RightParen) {
                     Ok((Expr::Grouping(Box::new(expr)), remaining_trimmed))
                 } else {
-                    Err(ParseError::Incomplete(format!("Expected ')', found {:?}", next)))
+                    Err(ParseError {
+                        cause: ParseErrorType::Incomplete, 
+                        token: Some(next),
+                        message: format!("Expected ')', found {:?}", next)
+                    })
                 }
             } else {
-                Err(ParseError::Incomplete(format!("No closing ')' found {:?}", remaining)))
+                Err(ParseError {
+                    cause: ParseErrorType::Incomplete, 
+                    token: Some(token),
+                    message: format!("No closing ')' found")
+                })
             }
         }
-        _ => Err(ParseError::Invalid)
+        Some((token, _)) => Err(ParseError {
+            cause: ParseErrorType::Invalid, 
+            token: Some(token),
+            message: format!("Invalid token {:?}", token)
+        }),
+        None => Err(ParseError {
+            cause: ParseErrorType::Invalid, 
+            token: None,
+            message: format!("Reached the end of file while parsing")
+        })
     }
 }

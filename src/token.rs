@@ -61,6 +61,7 @@ pub enum TokenType {
 pub enum Literal {
     String(Box<str>),
     Number(f64),
+    Boolean(bool),
 }
 
 // impl<'a> std::fmt::Display for Literal<'a> {
@@ -77,7 +78,7 @@ pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,
     pub literal: Option<Literal>,
-    pub line: i32,
+    pub line: u32,
 }
 
 impl fmt::Display for Token {

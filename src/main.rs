@@ -2,11 +2,17 @@ use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+mod interpreter;
 pub mod parser;
 mod scanner;
 pub mod token;
-mod interpreter;
-use crate::interpreter::evaluate;
+pub mod environment;
+use crate::interpreter::interpret;
+use crate::environment::Environment;
+
+struct LoxError {
+    exit_code: i32,
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -30,56 +36,68 @@ fn run_file(path_str: &str) -> () {
     };
 
     let mut s = String::new();
+    let mut env = Environment::new();
     match file.read_to_string(&mut s) {
         Err(why) => panic!("couldn't read {}: {}", display, why),
-        Ok(_) => {
-            if !run(&s) {
-                std::process::exit(65);
-            }
-        }
+        Ok(_) => match run(&s, &mut env) {
+            Ok(_) => (),
+            Err(err) => std::process::exit(err.exit_code),
+        },
     }
 }
 
 fn run_prompt() -> () {
+    let mut line = 1;
     loop {
+        print!("[{}] ", line);
+        match std::io::stdout().flush() {
+            Ok(_) => {}
+            Err(_) => panic!("flushing stdout resulted in an error, aborting"),
+        }
         let mut input = String::new();
+        let mut env = Environment::new();
         match std::io::stdin().read_line(&mut input) {
             Ok(0) => {
                 break;
             }
-            Ok(_) => {
-                run(&input);
-            }
+            Ok(_) => match run(&input, &mut env) {
+                Ok(_) | Err(_) => line += 1,
+            },
             Err(error) => println!("error: {}", error),
         }
     }
 }
 
-fn run(source: &str) -> bool {
+fn run(source: &str, env: &mut Environment) -> Result<(), LoxError> {
     match scanner::scan_tokens(source) {
         Ok(tokens) => {
             // for token in &tokens[..] {
             //     println!("{:?}", token);
             // }
             match parser::parse(&tokens[..]) {
-                Ok(expr) => {
-                    match evaluate(&expr) {
-                        Ok(val) => println!("{}", val),
-                        Err(interpreter::RuntimeError{
+                Ok(stmts) => match interpret(&stmts, env) {
+                    Ok(_) => {}
+                    Err(errs) => {
+                        for interpreter::RuntimeError {
                             expr,
-                            message
-                        }) => println!("{}: {}", message, expr)
+                            line,
+                            message,
+                        } in errs
+                        {
+                            println!("{} [line {}]: {}", message, line, expr);
+                        }
+                        return Err(LoxError { exit_code: 70 });
                     }
-                }
-                Err(parser::ParseError {
-                    cause,
-                    token,
-                    message,
-                }) => {
+                },
+                Err(parser::ParseError { token, message }) => {
                     match token {
-                        Some(token) => error(token.line, format!("parser error type {:?} on {:?}: {}", cause, token, message)),
-                        None => error(-1, format!("parser error type {:?} on {:?}: {}", cause, token, message))
+                        Some(token) => error(
+                            token.line,
+                            format!("parser error on {:?}: {}", token, message),
+                        ),
+                        None => error(0, format!("parser error on {:?}: {}", token, message)),
                     }
+                    return Err(LoxError { exit_code: 65 });
                 }
             }
         }
@@ -100,16 +118,16 @@ fn run(source: &str) -> bool {
                     format!("Could not parse {} as a number at {} ({})", s, position, e),
                 ),
             }
-            return false;
+            return Err(LoxError { exit_code: 65 });
         }
     }
-    return true;
+    return Ok(());
 }
 
-pub fn error(line: i32, message: String) -> () {
+pub fn error(line: u32, message: String) -> () {
     report(line, "", message);
 }
 
-pub fn report(line: i32, location: &str, message: String) -> () {
+pub fn report(line: u32, location: &str, message: String) -> () {
     println!("[line {}] Error {}: {}", line, location, message);
 }

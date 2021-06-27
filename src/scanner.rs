@@ -31,19 +31,31 @@ lazy_static! {
 #[derive(Debug)]
 struct ScanState<'a> {
     current: usize,
-    line: i32,
+    line: u32,
     source: &'a str,
     iter: &'a mut std::iter::Peekable<Chars<'a>>,
     lexeme: String,
 }
 
-impl<'a> ScanState<'a> {
+impl ScanState<'_> {
+    // fn new(source: &str) -> ScanState {
+    //     ScanState {
+    //         current: 0,
+    //         line: 1,
+    //         source: source,
+    //         iter: &mut source.chars().peekable(),
+    //         lexeme: String::new(),
+    //     }
+    // }
+
     fn advance(&mut self) -> Option<char> {
         match self.iter.next() {
             None => None,
             Some(c) => {
                 self.current += 1;
-                self.lexeme.push(c);
+                if !c.is_whitespace() {
+                    self.lexeme.push(c);
+                }
                 Some(c)
             }
         }
@@ -71,7 +83,7 @@ pub enum ScanErrorType {
 #[derive(Debug)]
 pub struct ScanError {
     pub cause: ScanErrorType,
-    pub line: i32,
+    pub line: u32,
     pub position: usize,
 }
 
@@ -228,8 +240,6 @@ fn parse_ident(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
             Some(i) => match i {
                 '_' | 'A'..='z' | '0'..='9' => s.push(i),
                 _ => {
-                    // TODO look up s in statis map of reserved words
-                    // return the associated token or an identifier token
                     break;
                 }
             },
@@ -240,7 +250,13 @@ fn parse_ident(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
         state.advance();
     }
     match KEYWORDS.contains_key(s.as_str()) {
-        true => Ok(make_token(*KEYWORDS.get(s.as_str()).unwrap(), None, state)),
+        true => {
+            match s.as_str() {
+                "true" => Ok(make_token(TokenType::True, Some(Literal::Boolean(true)), state)),
+                "false" => Ok(make_token(TokenType::True, Some(Literal::Boolean(false)), state)),
+                _ => Ok(make_token(*KEYWORDS.get(s.as_str()).unwrap(), None, state))
+            }
+        }
         false => Ok(make_token(TokenType::Identifier, None, state)),
     }
 }

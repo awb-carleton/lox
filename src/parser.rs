@@ -8,17 +8,18 @@ pub enum Expr<'a> {
     Grouping(Box<Expr<'a>>),
     Unary(&'a Token, Box<Expr<'a>>),
     Binary(Box<Expr<'a>>, &'a Token, Box<Expr<'a>>),
+    Variable(&'a Token),
 }
 
 #[derive(Debug)]
-pub enum ParseErrorType {
-    Incomplete,
-    Invalid
+pub enum Stmt<'a> {
+    Expression(Box<Expr<'a>>),
+    Print(Box<Expr<'a>>),
+    Declaration(&'a Token, Option<Box<Expr<'a>>>),
 }
 
 #[derive(Debug)]
 pub struct ParseError<'a> {
-    pub cause: ParseErrorType,
     pub token: Option<&'a Token>,
     pub message: String
 }
@@ -49,6 +50,7 @@ pub fn expr_to_str(expr: &Expr) -> String {
                     None => panic!("String token has no literal"),
                     Some(Literal::String(ss)) => s.push_str(&ss),
                     Some(Literal::Number(n)) => s.push_str(&n.to_string()),
+                    Some(Literal::Boolean(b)) => s.push_str(&b.to_string()),
                 },
                 //TokenType::True | TokenType::False | TokenType::Nil => {
                 _ => s.push_str(&format!("{:?}", t.token_type)),
@@ -63,14 +65,76 @@ pub fn expr_to_str(expr: &Expr) -> String {
         Expr::Binary(left, op, right) => {
             s.push_str(&parenthesize!(op.lexeme, expr_to_str(left), expr_to_str(right)))
         }
+        Expr::Variable(t) => {
+            s.push_str(t.lexeme.as_str())
+        }
     }
     s
 }
 
-pub fn parse(tokens: &[Token]) -> Result<Expr, ParseError> {
+pub fn parse(tokens: &[Token]) -> Result<Vec<Stmt>, ParseError> {
     // TODO handle error and consume tokens until next statement
-    let (expr, _) = expression(tokens)?;
-    Ok(expr)
+    let mut stmts = vec![];
+    let (stmt, mut remaining) = statement(tokens)?;
+    stmts.push(stmt);
+    // println!("{:?}", stmts);
+    while !remaining.is_empty() {
+        let (stmt, rest) = statement(remaining)?;
+        stmts.push(stmt);
+        remaining = rest;
+        // println!("{:?}", stmts);
+    }
+    Ok(stmts)
+}
+
+fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), ParseError> {
+    match tokens.first() {
+        Some(Token {token_type: TokenType::Var, ..}) => {
+            let (_, rest) = tokens.split_first().unwrap();
+            match rest.split_first() {
+                Some((ident @ Token {token_type: TokenType::Identifier, ..}, rest)) => {
+                    match rest.split_first() {
+                        Some((Token {token_type: TokenType::Equal, ..}, rest)) => {
+                            let (expr, remaining) = expression(rest)?;
+                            if let Some(Token {token_type: TokenType::Semicolon, ..}) = remaining.first() {
+                                Ok((Stmt::Declaration(ident, Some(Box::new(expr))), remaining.split_first().unwrap().1))
+                            } else {
+                                Err(ParseError { token: remaining.first(), 
+                                    message: "Expected ';' after variable declaration".to_string()})
+                            }
+                        }
+                        Some((Token {token_type: TokenType::Semicolon, ..}, rest)) => {
+                            Ok((Stmt::Declaration(ident, None), rest))
+                        }
+                        _ => Err(ParseError { token: rest.first(), 
+                            message: "Expected '=' or ';' after variable name in declaration".to_string()})
+                    }
+                }
+                Some((t, _)) => Err(ParseError { token: Some(t), 
+                            message: "Expected an identifier after 'var'".to_string()}),
+                None => Err(ParseError { token: None, 
+                            message: "Expected an identifier after 'var'".to_string()}),
+            }
+        }
+        Some(Token {token_type: TokenType::Print, ..}) => {
+            let (_, rest) = tokens.split_first().unwrap();
+            let (expr, remaining) = expression(rest)?;
+            if let Some(Token {token_type: TokenType::Semicolon, ..}) = remaining.first() {
+                Ok((Stmt::Print(Box::new(expr)), remaining.split_first().unwrap().1))
+            } else {
+                Err(ParseError { token: remaining.first(), message: "Expected ';' after value".to_string()})
+            }
+        }
+        Some(_) => {
+            let (expr, remaining) = expression(tokens)?;
+            if let Some(Token {token_type: TokenType::Semicolon, ..}) = remaining.first() {
+                Ok((Stmt::Expression(Box::new(expr)), remaining.split_first().unwrap().1))
+            } else {
+                Err(ParseError { token: remaining.first(), message: "Expected ';' after expression".to_string()})
+            }
+        }
+        None => panic!("parser::statement called on empty slice of tokens")
+    }
 }
 
 fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
@@ -92,7 +156,6 @@ macro_rules! parse_binary_expr {
                             expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
                         } else {
                             return Err(ParseError {
-                                cause: ParseErrorType::Incomplete, 
                                 token: Some(token),
                                 message: format!("could not parse right hand side of {}", $cur_fn)
                             });
@@ -141,7 +204,6 @@ fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
                 return Ok((Expr::Unary(token, Box::new(right)), remaining));
             } else {
                 return Err(ParseError {
-                    cause: ParseErrorType::Incomplete, 
                     token: Some(token),
                     message: format!("found unary with no right-hand expression")
                 });
@@ -160,6 +222,7 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
         Some((token @ Token {token_type: TokenType::Nil, ..}, rest))    |
         Some((token @ Token {token_type: TokenType::Number, ..}, rest)) |
         Some((token @ Token {token_type: TokenType::String, ..}, rest)) => Ok((Expr::Literal(token), rest)),
+        Some((token @ Token {token_type: TokenType::Identifier, ..}, rest)) => Ok((Expr::Variable(token), rest)),
         Some((token @ Token {token_type: TokenType::LeftParen, ..}, rest)) => {
             let (expr, remaining) = expression(rest)?;
             if let Some((next, remaining_trimmed)) = remaining.split_first() {
@@ -167,26 +230,22 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
                     Ok((Expr::Grouping(Box::new(expr)), remaining_trimmed))
                 } else {
                     Err(ParseError {
-                        cause: ParseErrorType::Incomplete, 
                         token: Some(next),
                         message: format!("Expected ')', found {:?}", next)
                     })
                 }
             } else {
                 Err(ParseError {
-                    cause: ParseErrorType::Incomplete, 
                     token: Some(token),
                     message: format!("No closing ')' found")
                 })
             }
         }
         Some((token, _)) => Err(ParseError {
-            cause: ParseErrorType::Invalid, 
             token: Some(token),
             message: format!("Invalid token {:?}", token)
         }),
         None => Err(ParseError {
-            cause: ParseErrorType::Invalid, 
             token: None,
             message: format!("Reached the end of file while parsing")
         })

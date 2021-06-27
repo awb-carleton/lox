@@ -65,19 +65,19 @@ fn execute(stmt: &Stmt, env: &mut Environment) -> Result<(), RuntimeError> {
                 Err(err) => Err(err)
             }
         }
-        Stmt::Declaration(ident, init) => {
+        Stmt::Declaration(name, init) => {
             match init {
                 Some(expr) => {
                     match evaluate(expr, env) {
                         Ok(val) => {
-                            env.define(ident, val);
+                            env.define(name, val);
                             Ok(())
                         }
                         Err(err) => Err(err)
                     }
                 }
                 None => {
-                    env.define(ident, Value::Nil);
+                    env.define(name, Value::Nil);
                     Ok(())
                 }
             }
@@ -85,7 +85,7 @@ fn execute(stmt: &Stmt, env: &mut Environment) -> Result<(), RuntimeError> {
     }
 }
 
-fn evaluate(expr: &Expr, env: &Environment) -> Result<Value, RuntimeError> {
+fn evaluate(expr: &Expr, env: &mut Environment) -> Result<Value, RuntimeError> {
     match expr {
         Expr::Literal(t) => {
             match &t.literal {
@@ -97,6 +97,14 @@ fn evaluate(expr: &Expr, env: &Environment) -> Result<Value, RuntimeError> {
         }
         Expr::Variable(name) => {
             env.get(name)
+        }
+        Expr::Assign(name, expr) => {
+            match evaluate(expr, env) {
+                Ok(val) => {
+                    env.assign(name, val.clone())
+                }
+                Err(err) => Err(err)
+            }
         }
         Expr::Grouping(ex) => evaluate(ex, env),
         Expr::Unary(op, ex) => {

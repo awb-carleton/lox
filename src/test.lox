@@ -4,3 +4,5 @@ print 2 + 1;
 var a = 1;
 var b = 2;
 print a + b;
+a = 5;
+print b = a;

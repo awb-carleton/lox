@@ -89,13 +89,15 @@ fn run(source: &str, env: &mut Environment) -> Result<(), LoxError> {
                         return Err(LoxError { exit_code: 70 });
                     }
                 },
-                Err(parser::ParseError { token, message }) => {
-                    match token {
-                        Some(token) => error(
-                            token.line,
-                            format!("parser error on {:?}: {}", token, message),
-                        ),
-                        None => error(0, format!("parser error on {:?}: {}", token, message)),
+                Err(errs) => {
+                    for parser::ParseError { token, message } in errs {
+                        match token {
+                            Some(token) => error(
+                                token.line,
+                                format!("parser error on {:?}: {}", token, message),
+                            ),
+                            None => error(0, format!("parser error on {:?}: {}", token, message)),
+                        }
                     }
                     return Err(LoxError { exit_code: 65 });
                 }

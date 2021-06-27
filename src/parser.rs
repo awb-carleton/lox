@@ -9,6 +9,7 @@ pub enum Expr<'a> {
     Unary(&'a Token, Box<Expr<'a>>),
     Binary(Box<Expr<'a>>, &'a Token, Box<Expr<'a>>),
     Variable(&'a Token),
+    Assign(&'a Token, Box<Expr<'a>>)
 }
 
 #[derive(Debug)]
@@ -68,77 +69,144 @@ pub fn expr_to_str(expr: &Expr) -> String {
         Expr::Variable(t) => {
             s.push_str(t.lexeme.as_str())
         }
+        Expr::Assign(t, expr) => {
+            s.push_str(&parenthesize!(t.lexeme, " = ", expr_to_str(expr)))
+        }
     }
     s
 }
 
-pub fn parse(tokens: &[Token]) -> Result<Vec<Stmt>, ParseError> {
-    // TODO handle error and consume tokens until next statement
+pub fn parse(tokens: &[Token]) -> Result<Vec<Stmt>, Vec<ParseError>> {
     let mut stmts = vec![];
-    let (stmt, mut remaining) = statement(tokens)?;
-    stmts.push(stmt);
-    // println!("{:?}", stmts);
+    let mut errors = vec![];
+    let mut remaining = tokens;
     while !remaining.is_empty() {
-        let (stmt, rest) = statement(remaining)?;
-        stmts.push(stmt);
-        remaining = rest;
-        // println!("{:?}", stmts);
+        // this feels very hacky, but otherwise we get a parse error on blank lines at the end
+        if let Some(Token {token_type: TokenType::EOF, ..}) = remaining.first() {
+            break;
+        }
+        match statement(remaining) {
+            Ok((stmt, rest)) => {
+                stmts.push(stmt);
+                remaining = rest;
+                // println!("{:?}", stmts);
+            } 
+            Err((err, rest)) => {
+                // println!("{:?}", err);
+                remaining = synchronize(rest);
+                errors.push(err)
+            }
+        }
     }
-    Ok(stmts)
+    if errors.len() > 0 {
+        Err(errors)
+    } else {
+        Ok(stmts)
+    }
 }
 
-fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), ParseError> {
+fn synchronize(tokens: &[Token]) -> &[Token] {
+    // println!("parser in panic mode {:?}", tokens);
     match tokens.first() {
-        Some(Token {token_type: TokenType::Var, ..}) => {
-            let (_, rest) = tokens.split_first().unwrap();
-            match rest.split_first() {
-                Some((ident @ Token {token_type: TokenType::Identifier, ..}, rest)) => {
+        Some(Token {token_type: TokenType::Semicolon, ..}) => tokens.split_first().unwrap().1,
+        Some(Token {token_type: TokenType::Class, ..}) |
+        Some(Token {token_type: TokenType::Fun, ..}) |
+        Some(Token {token_type: TokenType::Var, ..}) |
+        Some(Token {token_type: TokenType::For, ..}) |
+        Some(Token {token_type: TokenType::If, ..}) |
+        Some(Token {token_type: TokenType::While, ..}) |
+        Some(Token {token_type: TokenType::Return, ..}) |
+        Some(Token {token_type: TokenType::Print, ..}) => tokens,
+        Some(_) => synchronize(tokens.split_first().unwrap().1),
+        None => &[]
+    }
+}
+
+fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), (ParseError, &[Token])> {
+    match tokens.first() {
+        // variable declaration
+        Some(Token {token_type: TokenType::Var, ..}) => { // match var keyword
+            let (_, remaining) = tokens.split_first().unwrap();
+            match remaining.split_first() {
+                Some((ident @ Token {token_type: TokenType::Identifier, ..}, rest)) => { // var must be followed by an identifier
                     match rest.split_first() {
-                        Some((Token {token_type: TokenType::Equal, ..}, rest)) => {
+                        Some((Token {token_type: TokenType::Equal, ..}, rest)) => { // then an '='
+                            // and finally an expression followed by a ';'
                             let (expr, remaining) = expression(rest)?;
                             if let Some(Token {token_type: TokenType::Semicolon, ..}) = remaining.first() {
                                 Ok((Stmt::Declaration(ident, Some(Box::new(expr))), remaining.split_first().unwrap().1))
                             } else {
-                                Err(ParseError { token: remaining.first(), 
-                                    message: "Expected ';' after variable declaration".to_string()})
+                                Err((ParseError { token: rest.first(), 
+                                     message: "Expected ';' after variable declaration".to_string()}, remaining))
                             }
                         }
-                        Some((Token {token_type: TokenType::Semicolon, ..}, rest)) => {
+                        Some((Token {token_type: TokenType::Semicolon, ..}, rest)) => { // or a ';'
                             Ok((Stmt::Declaration(ident, None), rest))
                         }
-                        _ => Err(ParseError { token: rest.first(), 
-                            message: "Expected '=' or ';' after variable name in declaration".to_string()})
+                        _ => Err((ParseError { token: remaining.first(), 
+                            message: "Expected '=' or ';' after variable name in declaration".to_string()}, rest))
                     }
                 }
-                Some((t, _)) => Err(ParseError { token: Some(t), 
-                            message: "Expected an identifier after 'var'".to_string()}),
-                None => Err(ParseError { token: None, 
-                            message: "Expected an identifier after 'var'".to_string()}),
+                Some((t, _)) => Err((ParseError { token: Some(t), 
+                            message: "Expected an identifier after 'var'".to_string()}, remaining)),
+                None => Err((ParseError { token: tokens.first(), 
+                            message: "Expected an identifier after 'var'".to_string()}, remaining)),
             }
         }
+        // print statement
         Some(Token {token_type: TokenType::Print, ..}) => {
             let (_, rest) = tokens.split_first().unwrap();
             let (expr, remaining) = expression(rest)?;
             if let Some(Token {token_type: TokenType::Semicolon, ..}) = remaining.first() {
                 Ok((Stmt::Print(Box::new(expr)), remaining.split_first().unwrap().1))
             } else {
-                Err(ParseError { token: remaining.first(), message: "Expected ';' after value".to_string()})
+                Err((ParseError { token: rest.first(), 
+                    message: "Expected ';' after value".to_string()}, remaining))
             }
         }
+        // expression statement
         Some(_) => {
             let (expr, remaining) = expression(tokens)?;
             if let Some(Token {token_type: TokenType::Semicolon, ..}) = remaining.first() {
                 Ok((Stmt::Expression(Box::new(expr)), remaining.split_first().unwrap().1))
             } else {
-                Err(ParseError { token: remaining.first(), message: "Expected ';' after expression".to_string()})
+                Err((ParseError { token: tokens.first(), 
+                    message: "Expected ';' after expression".to_string()}, remaining))
             }
         }
         None => panic!("parser::statement called on empty slice of tokens")
     }
 }
 
-fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
-    equality(tokens)
+fn expression(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
+    assignment(tokens)
+}
+
+fn assignment(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
+    let (expr, remaining) = equality(tokens)?; // left-hand side
+    
+    match remaining.first() {
+        Some(Token {token_type: TokenType::Equal, ..}) => { // then a '='
+            match expr {
+                Expr::Variable(name) => { // left hand side must be a variable (TODO: object field)
+                    if let Some((_, rest)) = remaining.split_first() {
+                        let (right, remaining) = assignment(rest)?;
+                        return Ok((Expr::Assign(name, Box::new(right)), remaining));
+                    } else {
+                        return Err((ParseError {
+                            token: Some(name),
+                            message: format!("found assignment with no right-hand expression.")
+                        }, remaining));
+                    }
+                }
+                _ => Err((ParseError {
+                    token: remaining.first(),
+                    message: format!("{:?} invalid assignment target", expr)
+                }, remaining))
+            }
+        }
+        _ => { return Ok((expr, remaining)) }
+    }
 }
 
 macro_rules! parse_binary_expr {
@@ -155,10 +223,10 @@ macro_rules! parse_binary_expr {
                             remaining = temp.1;
                             expr = Expr::Binary(Box::new(expr), token, Box::new(temp.0));
                         } else {
-                            return Err(ParseError {
+                            return Err((ParseError {
                                 token: Some(token),
                                 message: format!("could not parse right hand side of {}", $cur_fn)
-                            });
+                            }, remaining));
                         }
                     }
                     _ => { return Ok((expr, remaining)); }
@@ -168,32 +236,32 @@ macro_rules! parse_binary_expr {
     };
 }
 
-fn equality(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
+fn equality(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match COMPARISON (!= | == COMPARISON)*
 
     parse_binary_expr!(tokens, "equality", comparison, TokenType::BangEqual, TokenType::EqualEqual)
 }
 
-fn comparison(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
+fn comparison(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match TERM (< | <= | > | >= TERM)*
 
     parse_binary_expr!(tokens, "comparison", term, TokenType::Less, TokenType::LessEqual, 
         TokenType::Greater, TokenType::GreaterEqual)
 }
 
-fn term(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
+fn term(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match FACTOR (+ | - FACTOR)*
 
     parse_binary_expr!(tokens, "term", factor, TokenType::Minus, TokenType::Plus)    
 }
 
-fn factor(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
+fn factor(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match UNARY (* | / UNARY)*
 
     parse_binary_expr!(tokens, "factor", unary, TokenType::Star, TokenType::Slash)
 }
 
-fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
+fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match ! | - (UNARY | PRIMARY)
 
     match tokens.first() {
@@ -203,17 +271,17 @@ fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
                 let (right, remaining) = unary(rest)?;
                 return Ok((Expr::Unary(token, Box::new(right)), remaining));
             } else {
-                return Err(ParseError {
+                return Err((ParseError {
                     token: Some(token),
                     message: format!("found unary with no right-hand expression")
-                });
+                }, tokens));
             }
         }
         _ => { return primary(tokens); }
     }
 }
 
-fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
+fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")"
 
     match tokens.split_first() {
@@ -229,25 +297,25 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), ParseError> {
                 if matches!(next.token_type, TokenType::RightParen) {
                     Ok((Expr::Grouping(Box::new(expr)), remaining_trimmed))
                 } else {
-                    Err(ParseError {
+                    Err((ParseError {
                         token: Some(next),
                         message: format!("Expected ')', found {:?}", next)
-                    })
+                    }, remaining))
                 }
             } else {
-                Err(ParseError {
+                Err((ParseError {
                     token: Some(token),
                     message: format!("No closing ')' found")
-                })
+                }, remaining))
             }
         }
-        Some((token, _)) => Err(ParseError {
+        Some((token, _)) => Err((ParseError {
             token: Some(token),
             message: format!("Invalid token {:?}", token)
-        }),
-        None => Err(ParseError {
+        }, tokens)),
+        None => Err((ParseError {
             token: None,
             message: format!("Reached the end of file while parsing")
-        })
+        }, tokens))
     }
 }

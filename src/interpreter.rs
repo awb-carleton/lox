@@ -50,6 +50,18 @@ pub fn interpret(stmts: &Vec<Stmt>, env: &mut Environment) -> Result<(), Vec<Run
 
 fn execute(stmt: &Stmt, env: &mut Environment) -> Result<(), RuntimeError> {
     match stmt {
+        Stmt::Block(stmts) => {
+            let mut block_env = env.clone();
+            for stmt in stmts.iter() {
+                match execute(stmt, &mut block_env) {
+                    Ok(_) => {}
+                    Err(err) => {
+                        return Err(err);
+                    }
+                }
+            }
+            Ok(())
+        }
         Stmt::Expression(expr) => {
             match evaluate(expr, env) {
                 Ok(_) => Ok(()),

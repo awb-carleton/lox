@@ -1,15 +1,17 @@
-use std::collections::HashMap;
-use crate::interpreter::Value;
 use crate::interpreter::RuntimeError;
+use crate::interpreter::Value;
 use crate::token::Token;
+use std::collections::HashMap;
 
+#[derive(Clone)]
 pub struct Environment {
     variables: HashMap<String, Value>
 }
 
 impl Environment {
     pub fn new() -> Environment {
-        Environment { variables: HashMap::new() }
+        Environment {
+            variables: HashMap::new()        }
     }
 
     pub fn define(&mut self, name: &Token, v: Value) -> () {

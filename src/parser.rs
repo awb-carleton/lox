@@ -14,6 +14,7 @@ pub enum Expr<'a> {
 
 #[derive(Debug)]
 pub enum Stmt<'a> {
+    Block(Vec<Stmt<'a>>),
     Expression(Box<Expr<'a>>),
     Print(Box<Expr<'a>>),
     Declaration(&'a Token, Option<Box<Expr<'a>>>),
@@ -122,8 +123,46 @@ fn synchronize(tokens: &[Token]) -> &[Token] {
     }
 }
 
+// parse a series of statements contained within curly braces
+// assumes the opening brace has already been matched (but not consumed)
+fn block(tokens: &[Token]) -> Result<(Vec<Stmt>, &[Token]), (ParseError, &[Token])> {
+    let (_, mut remaining) = tokens.split_first().unwrap();
+    let mut stmts = vec![];
+    loop {
+        // check for a } ending the block or the end of file
+        match remaining.split_first() {
+            Some((Token {token_type: TokenType::RightBrace, ..}, rest)) => {
+                return Ok((stmts, rest));
+            }
+            None => {
+                return Err((ParseError { token: None, 
+                    message: "EOF reached without closing }".to_string()}, remaining));
+            }
+            // block continues
+            _ => {
+                match statement(remaining) {
+                    Ok((stmt, rest)) => {
+                        stmts.push(stmt);
+                        remaining = rest;
+                    } 
+                    Err((err, rest)) => {
+                        return Err((err, rest));
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), (ParseError, &[Token])> {
     match tokens.first() {
+        // block
+        Some(Token {token_type: TokenType::LeftBrace, ..}) => {
+            match block(tokens) {
+                Ok((stmts, rest)) => Ok((Stmt::Block(stmts), rest)),
+                Err((err, rest)) => Err((err, rest))
+            }
+        }
         // variable declaration
         Some(Token {token_type: TokenType::Var, ..}) => { // match var keyword
             let (_, remaining) = tokens.split_first().unwrap();

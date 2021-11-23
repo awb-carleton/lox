@@ -6,3 +6,16 @@ var b = 2;
 print a + b;
 a = 5;
 print b = a;
+{
+    var a = 7;
+    var b = 10;
+    {
+        var a = 42;
+        print a;
+        print b;
+    }
+    print a;
+    print b;
+}
+print a;
+print b;

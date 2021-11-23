@@ -48,6 +48,7 @@ fn run_file(path_str: &str) -> () {
 
 fn run_prompt() -> () {
     let mut line = 1;
+    let mut env = Environment::new();
     loop {
         print!("[{}] ", line);
         match std::io::stdout().flush() {
@@ -55,7 +56,6 @@ fn run_prompt() -> () {
             Err(_) => panic!("flushing stdout resulted in an error, aborting"),
         }
         let mut input = String::new();
-        let mut env = Environment::new();
         match std::io::stdin().read_line(&mut input) {
             Ok(0) => {
                 break;

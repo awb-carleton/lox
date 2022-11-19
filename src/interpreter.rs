@@ -94,6 +94,21 @@ fn execute(stmt: &Stmt, env: &mut Environment) -> Result<(), RuntimeError> {
                 }
             }
         }
+        Stmt::If(condition, then_branch, else_branch) => {
+            match evaluate(&condition, env) {
+                Ok(val) => {
+                    if is_truthy(val) {
+                        execute(then_branch, env)
+                    } else {
+                        match else_branch {
+                            Some(s) => execute(s, env),
+                            None => Ok(())
+                        }
+                    }
+                }
+                Err(err) => Err(err)
+            }
+        }
     }
 }
 

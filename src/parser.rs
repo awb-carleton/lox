@@ -18,6 +18,7 @@ pub enum Stmt<'a> {
     Expression(Box<Expr<'a>>),
     Print(Box<Expr<'a>>),
     Declaration(&'a Token, Option<Box<Expr<'a>>>),
+    If(Box<Expr<'a>>, Box<Stmt<'a>>, Option<Box<Stmt<'a>>>),
 }
 
 #[derive(Debug)]
@@ -201,6 +202,28 @@ fn statement(tokens: &[Token]) -> Result<(Stmt, &[Token]), (ParseError, &[Token]
             } else {
                 Err((ParseError { token: rest.first(), 
                     message: "Expected ';' after value".to_string()}, remaining))
+            }
+        }
+        // if statement
+        Some(Token {token_type: TokenType::If, ..}) => { // match the if
+            let (_, rest) = tokens.split_first().unwrap();
+            if let Some(Token {token_type: TokenType::LeftParen, ..}) = rest.first() { // match (
+                let (condition, remaining) = expression(rest.split_first().unwrap().1)?; // parse condition
+                if let Some(Token {token_type: TokenType::RightParen, ..}) = remaining.first() { // match )
+                    let (then_branch, remaining) = statement(remaining.split_first().unwrap().1)?; // parse then stmt
+                    if let Some(Token {token_type: TokenType::Else, ..}) = remaining.first() { // match else
+                        let (else_stmt, remaining) = statement(remaining.split_first().unwrap().1)?;
+                        Ok((Stmt::If(Box::new(condition), Box::new(then_branch), Some(Box::new(else_stmt))), remaining))
+                    } else {
+                        Ok((Stmt::If(Box::new(condition), Box::new(then_branch), None), remaining))
+                    }
+                } else {
+                    Err((ParseError { token: remaining.first(), 
+                        message: "Expected ')' after condition".to_string()}, remaining))
+                }
+            } else {
+                Err((ParseError { token: rest.first(), 
+                    message: "Expected '(' after if".to_string()}, rest))
             }
         }
         // expression statement

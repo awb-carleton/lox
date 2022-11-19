@@ -19,3 +19,12 @@ print b = a;
 }
 print a;
 print b;
+if (a + 1 == b) {
+    print "then";
+    a = a + 1;
+} else {
+    print "else";
+    b = b + 1;
+}
+print a;
+print b;

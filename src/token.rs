@@ -1,6 +1,6 @@
-use std::fmt;
+use std::{fmt, rc::Rc};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TokenType {
     // Single-character tokens.
     LeftParen,
@@ -51,15 +51,15 @@ pub enum TokenType {
     EOF,
 }
 
-// impl std::fmt::Display for TokenType {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         write!(f, "{}", self)
-//     }
-// }
+impl std::fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Literal {
-    String(Box<str>),
+    String(Rc<str>),
     Number(f64),
     Boolean(bool),
 }
@@ -73,7 +73,7 @@ pub enum Literal {
 //     }
 // }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Token {
     pub token_type: TokenType,
     pub lexeme: String,

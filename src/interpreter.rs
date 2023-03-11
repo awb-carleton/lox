@@ -1,16 +1,17 @@
-use crate::parser::Expr;
-use crate::token::TokenType;
-use crate::token::Literal;
-use crate::parser::expr_to_str;
-use crate::parser::Stmt;
 use crate::environment::Environment;
+use crate::parser::expr_to_str;
+use crate::parser::Expr;
+use crate::parser::Stmt;
+use crate::token::TokenType;
+use std::cell::RefCell;
 use std::fmt;
 use std::fmt::Display;
+use std::rc::Rc;
 
-#[derive(PartialEq, Clone)]
+#[derive(PartialEq, Clone, Debug)]
 pub enum Value {
     Number(f64),
-    String(Box<str>),
+    String(Rc<str>),
     Boolean(bool),
     Nil,
 }
@@ -33,12 +34,15 @@ pub struct RuntimeError {
     pub message: String,
 }
 
-pub fn interpret(stmts: &Vec<Stmt>, env: &mut Environment) -> Result<(), Vec<RuntimeError>> {
+pub fn interpret(
+    stmts: &Vec<Stmt>,
+    env: Rc<RefCell<Environment>>,
+) -> Result<(), Vec<RuntimeError>> {
     let mut errors = vec![];
     for stmt in stmts {
-        match execute(stmt, env) {
+        match execute(stmt, Rc::clone(&env)) {
             Ok(_) => {}
-            Err(err) => errors.push(err)
+            Err(err) => errors.push(err),
         }
     }
     if errors.len() > 0 {
@@ -48,12 +52,18 @@ pub fn interpret(stmts: &Vec<Stmt>, env: &mut Environment) -> Result<(), Vec<Run
     }
 }
 
-fn execute(stmt: &Stmt, env: &mut Environment) -> Result<(), RuntimeError> {
+fn execute(stmt: &Stmt, env: Rc<RefCell<Environment>>) -> Result<(), RuntimeError> {
+    log::debug!(
+        "execute {:?} with env {:?} ref count: {}",
+        stmt,
+        env,
+        Rc::strong_count(&env)
+    );
     match stmt {
         Stmt::Block(stmts) => {
-            let mut block_env = env.clone();
+            let block_env = Rc::new(RefCell::new(Environment::new(Some(env.clone()))));
             for stmt in stmts.iter() {
-                match execute(stmt, &mut block_env) {
+                match execute(stmt, Rc::clone(&block_env)) {
                     Ok(_) => {}
                     Err(err) => {
                         return Err(err);
@@ -62,83 +72,81 @@ fn execute(stmt: &Stmt, env: &mut Environment) -> Result<(), RuntimeError> {
             }
             Ok(())
         }
-        Stmt::Expression(expr) => {
-            match evaluate(expr, env) {
-                Ok(_) => Ok(()),
-                Err(err) => Err(err)
+        Stmt::Expression(expr) => match evaluate(expr, env) {
+            Ok(_) => Ok(()),
+            Err(err) => Err(err),
+        },
+        Stmt::Print(expr) => match evaluate(expr, env) {
+            Ok(val) => {
+                println!("{}", val);
+                Ok(())
             }
-        }
-        Stmt::Print(expr) => {
-            match evaluate(expr, env) {
+            Err(err) => Err(err),
+        },
+        Stmt::Declaration(name, init) => match init {
+            Some(expr) => match evaluate(expr, env.clone()) {
                 Ok(val) => {
-                    println!("{}", val);
+                    env.borrow_mut().define(name, val);
                     Ok(())
                 }
-                Err(err) => Err(err)
+                Err(err) => Err(err),
+            },
+            None => {
+                env.borrow_mut().define(name, Value::Nil);
+                Ok(())
             }
-        }
-        Stmt::Declaration(name, init) => {
-            match init {
-                Some(expr) => {
-                    match evaluate(expr, env) {
-                        Ok(val) => {
-                            env.define(name, val);
-                            Ok(())
-                        }
-                        Err(err) => Err(err)
+        },
+        Stmt::If(condition, then_branch, else_branch) => match evaluate(&condition, env.clone()) {
+            Ok(val) => {
+                if is_truthy(&val) {
+                    execute(then_branch, env)
+                } else {
+                    match else_branch {
+                        Some(s) => execute(s, env),
+                        None => Ok(()),
                     }
                 }
-                None => {
-                    env.define(name, Value::Nil);
-                    Ok(())
-                }
             }
-        }
-        Stmt::If(condition, then_branch, else_branch) => {
-            match evaluate(&condition, env) {
+            Err(err) => Err(err),
+        },
+        Stmt::While(condition, body) => loop {
+            match evaluate(&condition, env.clone()) {
                 Ok(val) => {
-                    if is_truthy(val) {
-                        execute(then_branch, env)
+                    if is_truthy(&val) {
+                        match execute(body, env.clone()) {
+                            Ok(()) => (),
+                            Err(err) => return Err(err),
+                        }
                     } else {
-                        match else_branch {
-                            Some(s) => execute(s, env),
-                            None => Ok(())
-                        }
+                        return Ok(());
                     }
                 }
-                Err(err) => Err(err)
+                Err(err) => return Err(err),
             }
-        }
+        },
     }
 }
 
-fn evaluate(expr: &Expr, env: &mut Environment) -> Result<Value, RuntimeError> {
+fn evaluate(expr: &Expr, env: Rc<RefCell<Environment>>) -> Result<Value, RuntimeError> {
+    log::debug!(
+        "evaluate {:?} with env {:?} ref count: {}",
+        expr,
+        env,
+        Rc::strong_count(&env)
+    );
     match expr {
-        Expr::Literal(t) => {
-            match &t.literal {
-                Some(Literal::String(s)) => Ok(Value::String(s.clone())),
-                Some(Literal::Number(n)) => Ok(Value::Number(*n)),
-                Some(Literal::Boolean(b)) => Ok(Value::Boolean(*b)),
-                _ => Err(RuntimeError {expr: expr_to_str(expr), line: t.line, message: "Invalid literal expression".to_string()})
-            }
-        }
-        Expr::Variable(name) => {
-            env.get(name)
-        }
-        Expr::Assign(name, expr) => {
-            match evaluate(expr, env) {
-                Ok(val) => {
-                    env.assign(name, val.clone())
-                }
-                Err(err) => Err(err)
-            }
-        }
+        Expr::Literal(v) => Ok(v.clone()),
+        Expr::Variable(name) => env.borrow().get(name),
+        Expr::Assign(name, expr) => match evaluate(expr, env.clone()) {
+            Ok(val) => env.borrow_mut().assign(name, val.clone()),
+            Err(err) => Err(err),
+        },
         Expr::Grouping(ex) => evaluate(ex, env),
         Expr::Unary(op, ex) => {
             let right = evaluate(ex, env)?;
             match (right, op.token_type) {
                 (Value::Number(num), TokenType::Minus) => Ok(Value::Number(-num)),
-                (val, TokenType::Bang) => Ok(Value::Boolean(!is_truthy(val))),
+                (val, TokenType::Bang) => Ok(Value::Boolean(!is_truthy(&val))),
                 _ => Err(RuntimeError {
                     expr: expr_to_str(expr),
                     line: op.line,
@@ -146,16 +154,31 @@ fn evaluate(expr: &Expr, env: &mut Environment) -> Result<Value, RuntimeError> {
                 }),
             }
         }
+        Expr::Logical(left_ex, op, right_ex) => {
+            let left = evaluate(left_ex, env.clone())?;
+            match (is_truthy(&left), op.token_type) {
+                (true, TokenType::Or) | (false, TokenType::And) => Ok(left),
+                (false, TokenType::Or) | (true, TokenType::And) => {
+                    let right = evaluate(right_ex, env.clone())?;
+                    Ok(right)
+                }
+                _ => Err(RuntimeError {
+                    expr: expr_to_str(expr),
+                    line: op.line,
+                    message: "Invalid logical expression".to_string(),
+                }),
+            }
+        }
         Expr::Binary(left_ex, op, right_ex) => {
-            let left = evaluate(left_ex, env)?;
-            let right = evaluate(right_ex, env)?;
+            let left = evaluate(left_ex, env.clone())?;
+            let right = evaluate(right_ex, env.clone())?;
             match (left, op.token_type, right) {
                 (Value::Number(l), TokenType::Star, Value::Number(r)) => Ok(Value::Number(l * r)),
                 (Value::Number(l), TokenType::Slash, Value::Number(r)) => Ok(Value::Number(l / r)),
                 (Value::Number(l), TokenType::Minus, Value::Number(r)) => Ok(Value::Number(l - r)),
                 (Value::Number(l), TokenType::Plus, Value::Number(r)) => Ok(Value::Number(l + r)),
                 (Value::String(l), TokenType::Plus, Value::String(r)) => {
-                    let s = (l.to_string() + &*r).into_boxed_str();
+                    let s = (l.to_string() + &*r).into();
                     Ok(Value::String(s))
                 }
                 (Value::Number(l), TokenType::Greater, Value::Number(r)) => {
@@ -180,7 +203,7 @@ fn evaluate(expr: &Expr, env: &mut Environment) -> Result<Value, RuntimeError> {
     }
 }
 
-fn is_truthy(val: Value) -> bool {
+fn is_truthy(val: &Value) -> bool {
     match val {
         Value::Nil => false,
         Value::Boolean(b) if !b => false,

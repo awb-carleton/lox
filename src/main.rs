@@ -1,20 +1,29 @@
+use std::cell::RefCell;
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::Path;
+use std::rc::Rc;
+pub mod environment;
 mod interpreter;
 pub mod parser;
 mod scanner;
 pub mod token;
-pub mod environment;
-use crate::interpreter::interpret;
+use log::LevelFilter;
+use simple_logger::SimpleLogger;
+
 use crate::environment::Environment;
+use crate::interpreter::interpret;
 
 struct LoxError {
     exit_code: i32,
 }
 
 fn main() {
+    SimpleLogger::new()
+        .with_level(LevelFilter::Warn)
+        .init()
+        .unwrap();
     let args: Vec<String> = env::args().collect();
     if args.len() > 2 {
         println!("Usage: jlox [script]");
@@ -36,10 +45,10 @@ fn run_file(path_str: &str) -> () {
     };
 
     let mut s = String::new();
-    let mut env = Environment::new();
+    let env = Rc::new(RefCell::new(Environment::new(None)));
     match file.read_to_string(&mut s) {
         Err(why) => panic!("couldn't read {}: {}", display, why),
-        Ok(_) => match run(&s, &mut env) {
+        Ok(_) => match run(&s, env) {
             Ok(_) => (),
             Err(err) => std::process::exit(err.exit_code),
         },
@@ -48,7 +57,7 @@ fn run_file(path_str: &str) -> () {
 
 fn run_prompt() -> () {
     let mut line = 1;
-    let mut env = Environment::new();
+    let env = Rc::new(RefCell::new(Environment::new(None)));
     loop {
         print!("[{}] ", line);
         match std::io::stdout().flush() {
@@ -60,15 +69,18 @@ fn run_prompt() -> () {
             Ok(0) => {
                 break;
             }
-            Ok(_) => match run(&input, &mut env) {
-                Ok(_) | Err(_) => line += 1,
+            Ok(_) => match run(&input, env.clone()) {
+                Ok(_) => {
+                    line += 1;
+                }
+                Err(_) => line += 1,
             },
             Err(error) => println!("error: {}", error),
         }
     }
 }
 
-fn run(source: &str, env: &mut Environment) -> Result<(), LoxError> {
+fn run(source: &str, env: Rc<RefCell<Environment>>) -> Result<(), LoxError> {
     match scanner::scan_tokens(source) {
         Ok(tokens) => {
             // for token in &tokens[..] {
@@ -76,7 +88,7 @@ fn run(source: &str, env: &mut Environment) -> Result<(), LoxError> {
             // }
             match parser::parse(&tokens[..]) {
                 Ok(stmts) => match interpret(&stmts, env) {
-                    Ok(_) => {}
+                    Ok(()) => return Ok(()),
                     Err(errs) => {
                         for interpreter::RuntimeError {
                             expr,
@@ -123,7 +135,6 @@ fn run(source: &str, env: &mut Environment) -> Result<(), LoxError> {
             return Err(LoxError { exit_code: 65 });
         }
     }
-    return Ok(());
 }
 
 pub fn error(line: u32, message: String) -> () {

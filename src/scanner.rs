@@ -32,7 +32,7 @@ lazy_static! {
 struct ScanState<'a> {
     current: usize,
     line: u32,
-    source: &'a str,
+    _source: &'a str,
     iter: &'a mut std::iter::Peekable<Chars<'a>>,
     lexeme: String,
 }
@@ -91,7 +91,7 @@ pub fn scan_tokens(source: &str) -> Result<Vec<Token>, ScanError> {
     let mut state = ScanState {
         current: 0,
         line: 1,
-        source: source,
+        _source: source,
         iter: &mut source.chars().peekable(),
         lexeme: String::new(),
     };
@@ -182,7 +182,7 @@ fn parse_string(state: &mut ScanState) -> Result<Token, ScanError> {
                 state.advance();
                 return Ok(make_token(
                     TokenType::String,
-                    Some(Literal::String(s.into_boxed_str())),
+                    Some(Literal::String(s.into())),
                     state,
                 ));
             }
@@ -250,13 +250,19 @@ fn parse_ident(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
         state.advance();
     }
     match KEYWORDS.contains_key(s.as_str()) {
-        true => {
-            match s.as_str() {
-                "true" => Ok(make_token(TokenType::True, Some(Literal::Boolean(true)), state)),
-                "false" => Ok(make_token(TokenType::True, Some(Literal::Boolean(false)), state)),
-                _ => Ok(make_token(*KEYWORDS.get(s.as_str()).unwrap(), None, state))
-            }
-        }
+        true => match s.as_str() {
+            "true" => Ok(make_token(
+                TokenType::True,
+                Some(Literal::Boolean(true)),
+                state,
+            )),
+            "false" => Ok(make_token(
+                TokenType::True,
+                Some(Literal::Boolean(false)),
+                state,
+            )),
+            _ => Ok(make_token(*KEYWORDS.get(s.as_str()).unwrap(), None, state)),
+        },
         false => Ok(make_token(TokenType::Identifier, None, state)),
     }
 }

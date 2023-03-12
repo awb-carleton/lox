@@ -144,7 +144,7 @@ fn evaluate(expr: &Expr, env: Rc<RefCell<Environment>>) -> Result<Value, Runtime
         Expr::Grouping(ex) => evaluate(ex, env),
         Expr::Unary(op, ex) => {
             let right = evaluate(ex, env)?;
-            match (right, op.token_type) {
+            match (right, op.token_type.to_owned()) {
                 (Value::Number(num), TokenType::Minus) => Ok(Value::Number(-num)),
                 (val, TokenType::Bang) => Ok(Value::Boolean(!is_truthy(&val))),
                 _ => Err(RuntimeError {
@@ -156,7 +156,7 @@ fn evaluate(expr: &Expr, env: Rc<RefCell<Environment>>) -> Result<Value, Runtime
         }
         Expr::Logical(left_ex, op, right_ex) => {
             let left = evaluate(left_ex, env.clone())?;
-            match (is_truthy(&left), op.token_type) {
+            match (is_truthy(&left), op.token_type.to_owned()) {
                 (true, TokenType::Or) | (false, TokenType::And) => Ok(left),
                 (false, TokenType::Or) | (true, TokenType::And) => {
                     let right = evaluate(right_ex, env.clone())?;
@@ -172,7 +172,7 @@ fn evaluate(expr: &Expr, env: Rc<RefCell<Environment>>) -> Result<Value, Runtime
         Expr::Binary(left_ex, op, right_ex) => {
             let left = evaluate(left_ex, env.clone())?;
             let right = evaluate(right_ex, env.clone())?;
-            match (left, op.token_type, right) {
+            match (left, op.token_type.to_owned(), right) {
                 (Value::Number(l), TokenType::Star, Value::Number(r)) => Ok(Value::Number(l * r)),
                 (Value::Number(l), TokenType::Slash, Value::Number(r)) => Ok(Value::Number(l / r)),
                 (Value::Number(l), TokenType::Minus, Value::Number(r)) => Ok(Value::Number(l - r)),
@@ -200,6 +200,7 @@ fn evaluate(expr: &Expr, env: Rc<RefCell<Environment>>) -> Result<Value, Runtime
                 }),
             }
         }
+        Expr::Call(_, _, _) => todo!(),
     }
 }
 

@@ -1,7 +1,6 @@
 use std::rc::Rc;
 
 use crate::interpreter::Value;
-use crate::token::Literal;
 use crate::token::Token;
 use crate::token::TokenType;
 
@@ -12,6 +11,7 @@ pub enum Expr {
     Unary(Rc<Token>, Rc<Expr>),
     Logical(Rc<Expr>, Rc<Token>, Rc<Expr>),
     Binary(Rc<Expr>, Rc<Token>, Rc<Expr>),
+    Call(Rc<Expr>, Rc<Token>, Vec<Expr>),
     Variable(Rc<Token>),
     Assign(Rc<Token>, Rc<Expr>),
 }
@@ -72,11 +72,23 @@ pub fn expr_to_str(expr: &Expr) -> String {
         )),
         Expr::Variable(t) => s.push_str(t.lexeme.as_str()),
         Expr::Assign(t, expr) => s.push_str(&parenthesize!(t.lexeme, " = ", expr_to_str(expr))),
+        Expr::Call(f, _, args) => s.push_str(&parenthesize!(
+            expr_to_str(f),
+            "(",
+            format!(
+                "{:?}",
+                args.into_iter()
+                    .map(|arg| expr_to_str(arg))
+                    .collect::<Vec<String>>()
+            ),
+            ")"
+        )),
     }
     s
 }
 
 fn next(type_: TokenType, tokens: &[Token]) -> Result<(&Token, &[Token]), (ParseError, &[Token])> {
+    log::debug!("next {}", type_);
     match tokens.split_first() {
         Some((token @ Token { token_type: tt, .. }, rest)) if (*tt) == type_ => Ok((token, rest)),
         Some((t, rest)) => Err((
@@ -91,9 +103,15 @@ fn next(type_: TokenType, tokens: &[Token]) -> Result<(&Token, &[Token]), (Parse
 }
 
 fn consume(type_: TokenType, tokens: &[Token]) -> Result<&[Token], (ParseError, &[Token])> {
-    log::debug!("consume {}", type_);
     let (_, rest) = next(type_, tokens)?;
     Ok(rest)
+}
+
+fn maybe_consume(type_: TokenType, tokens: &[Token]) -> &[Token] {
+    match consume(type_, tokens) {
+        Ok(tokens) => tokens,
+        Err((_, tokens)) => tokens,
+    }
 }
 
 enum PeekResult<'a> {
@@ -101,13 +119,20 @@ enum PeekResult<'a> {
     NoMatch,
 }
 
-fn peek(peek_type: TokenType, tokens: &[Token]) -> Option<PeekResult> {
+fn peek(type_: TokenType, tokens: &[Token]) -> Option<PeekResult> {
     match tokens.split_first() {
-        Some((Token { token_type: tt, .. }, rest)) if (*tt) == peek_type => {
+        Some((Token { token_type: tt, .. }, rest)) if (*tt) == type_ => {
             Some(PeekResult::Match(rest))
         }
         Some(_) => Some(PeekResult::NoMatch),
         None => None,
+    }
+}
+
+fn match_(type_: TokenType, tokens: &[Token]) -> bool {
+    match peek(type_, tokens) {
+        Some(PeekResult::Match(_)) => true,
+        _ => false,
     }
 }
 
@@ -233,6 +258,7 @@ fn block(tokens: &[Token]) -> Result<(Vec<Stmt>, &[Token]), (ParseError, &[Token
 }
 
 fn parse_block(tokens: &[Token]) -> Result<(Stmt, &[Token]), (ParseError, &[Token])> {
+    log::debug!("parse_block");
     match block(tokens) {
         Ok((stmts, rest)) => Ok((Stmt::Block(stmts), rest)),
         Err((err, rest)) => Err((err, rest)),
@@ -591,66 +617,71 @@ fn unary(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
             }
         }
         _ => {
-            return primary(tokens);
+            return call(tokens);
         }
+    }
+}
+
+fn call(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
+    // match PRIMARY ( "(" arguments? ")" )*
+
+    let (expr, tokens) = primary(tokens)?;
+    loop {
+        if match_(TokenType::LeftParen, tokens) {
+            return finish_call(expr, tokens);
+        } else {
+            break;
+        }
+    }
+    Ok((expr, tokens))
+}
+
+fn finish_call(expr: Expr, tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
+    let mut tokens = consume(TokenType::LeftParen, tokens)?;
+    let mut args = vec![];
+    while !match_(TokenType::RightParen, tokens) {
+        let tuple = expression(tokens)?;
+        tokens = tuple.1;
+        args.push(tuple.0);
+        tokens = maybe_consume(TokenType::Comma, tokens);
+    }
+    let (right_paren, tokens) = next(TokenType::RightParen, tokens)?;
+    if args.len() > 255 {
+        Err((
+            ParseError {
+                token: Some(right_paren),
+                message: format!("Can't have more than 255 arguments"),
+            },
+            tokens,
+        ))
+    } else {
+        Ok((
+            Expr::Call(Rc::new(expr), Rc::new(right_paren.clone()), args),
+            tokens,
+        ))
     }
 }
 
 fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])> {
     // match NUMBER | STRING | "true" | "false" | "nil" | "(" expression ")"
 
-    match tokens.split_first() {
-        Some((
-            Token {
-                token_type: TokenType::False,
-                ..
+    let (token, rest) = tokens.split_first().ok_or_else(|| {
+        (
+            ParseError {
+                token: None,
+                message: format!("Reached the end of file while parsing"),
             },
-            rest,
-        )) => Ok((Expr::Literal(Value::Boolean(false)), rest)),
-        Some((
-            Token {
-                token_type: TokenType::True,
-                ..
-            },
-            rest,
-        )) => Ok((Expr::Literal(Value::Boolean(true)), rest)),
-        Some((
-            Token {
-                token_type: TokenType::Nil,
-                ..
-            },
-            rest,
-        )) => Ok((Expr::Literal(Value::Nil), rest)),
-        Some((
-            Token {
-                token_type: TokenType::Number,
-                literal: Some(Literal::Number(n)),
-                ..
-            },
-            rest,
-        )) => Ok((Expr::Literal(Value::Number(*n)), rest)),
-        Some((
-            Token {
-                token_type: TokenType::String,
-                literal: Some(Literal::String(s)),
-                ..
-            },
-            rest,
-        )) => Ok((Expr::Literal(Value::String(s.clone())), rest)),
-        Some((
-            token @ Token {
-                token_type: TokenType::Identifier,
-                ..
-            },
-            rest,
-        )) => Ok((Expr::Variable(Rc::new(token.clone())), rest)),
-        Some((
-            token @ Token {
-                token_type: TokenType::LeftParen,
-                ..
-            },
-            rest,
-        )) => {
+            tokens,
+        )
+    })?;
+    match &token.token_type {
+        TokenType::False => Ok((Expr::Literal(Value::Boolean(false)), rest)),
+        TokenType::True => Ok((Expr::Literal(Value::Boolean(true)), rest)),
+        TokenType::Nil => Ok((Expr::Literal(Value::Nil), rest)),
+        TokenType::Number(n) => Ok((Expr::Literal(Value::Number(*n)), rest)),
+        TokenType::String(s) => Ok((Expr::Literal(Value::String((**s).into())), rest)),
+        TokenType::Identifier => Ok((Expr::Variable(Rc::new(token.clone())), rest)),
+        TokenType::LeftParen => {
             let (expr, remaining) = expression(rest)?;
             if let Some((next, remaining_trimmed)) = remaining.split_first() {
                 if matches!(next.token_type, TokenType::RightParen) {
@@ -674,17 +705,10 @@ fn primary(tokens: &[Token]) -> Result<(Expr, &[Token]), (ParseError, &[Token])>
                 ))
             }
         }
-        Some((token, _)) => Err((
+        _ => Err((
             ParseError {
                 token: Some(token),
                 message: format!("Invalid token {:?}", token),
-            },
-            tokens,
-        )),
-        None => Err((
-            ParseError {
-                token: None,
-                message: format!("Reached the end of file while parsing"),
             },
             tokens,
         )),

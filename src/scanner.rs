@@ -1,4 +1,3 @@
-use crate::token::Literal;
 use crate::token::Token;
 use crate::token::TokenType;
 use lazy_static::lazy_static;
@@ -38,16 +37,6 @@ struct ScanState<'a> {
 }
 
 impl ScanState<'_> {
-    // fn new(source: &str) -> ScanState {
-    //     ScanState {
-    //         current: 0,
-    //         line: 1,
-    //         source: source,
-    //         iter: &mut source.chars().peekable(),
-    //         lexeme: String::new(),
-    //     }
-    // }
-
     fn advance(&mut self) -> Option<char> {
         match self.iter.next() {
             None => None,
@@ -112,33 +101,33 @@ pub fn scan_tokens(source: &str) -> Result<Vec<Token>, ScanError> {
 fn scan_token(state: &mut ScanState) -> Result<Token, ScanError> {
     // println!("scanning {}", state.source.get(state.current..).unwrap());
     match state.advance() {
-        None => Ok(make_token(TokenType::EOF, None, state)),
+        None => Ok(make_token(TokenType::EOF, state)),
         Some(c) => match c {
-            '(' => Ok(make_token(TokenType::LeftParen, None, state)),
-            ')' => Ok(make_token(TokenType::RightParen, None, state)),
-            '{' => Ok(make_token(TokenType::LeftBrace, None, state)),
-            '}' => Ok(make_token(TokenType::RightBrace, None, state)),
-            ',' => Ok(make_token(TokenType::Comma, None, state)),
-            '.' => Ok(make_token(TokenType::Dot, None, state)),
-            '-' => Ok(make_token(TokenType::Minus, None, state)),
-            '+' => Ok(make_token(TokenType::Plus, None, state)),
-            ';' => Ok(make_token(TokenType::Semicolon, None, state)),
-            '*' => Ok(make_token(TokenType::Star, None, state)),
+            '(' => Ok(make_token(TokenType::LeftParen, state)),
+            ')' => Ok(make_token(TokenType::RightParen, state)),
+            '{' => Ok(make_token(TokenType::LeftBrace, state)),
+            '}' => Ok(make_token(TokenType::RightBrace, state)),
+            ',' => Ok(make_token(TokenType::Comma, state)),
+            '.' => Ok(make_token(TokenType::Dot, state)),
+            '-' => Ok(make_token(TokenType::Minus, state)),
+            '+' => Ok(make_token(TokenType::Plus, state)),
+            ';' => Ok(make_token(TokenType::Semicolon, state)),
+            '*' => Ok(make_token(TokenType::Star, state)),
             '=' => match match_next('=', state) {
-                true => Ok(make_token(TokenType::EqualEqual, None, state)),
-                false => Ok(make_token(TokenType::Equal, None, state)),
+                true => Ok(make_token(TokenType::EqualEqual, state)),
+                false => Ok(make_token(TokenType::Equal, state)),
             },
             '!' => match match_next('=', state) {
-                true => Ok(make_token(TokenType::BangEqual, None, state)),
-                false => Ok(make_token(TokenType::Bang, None, state)),
+                true => Ok(make_token(TokenType::BangEqual, state)),
+                false => Ok(make_token(TokenType::Bang, state)),
             },
             '<' => match match_next('=', state) {
-                true => Ok(make_token(TokenType::LessEqual, None, state)),
-                false => Ok(make_token(TokenType::Less, None, state)),
+                true => Ok(make_token(TokenType::LessEqual, state)),
+                false => Ok(make_token(TokenType::Less, state)),
             },
             '>' => match match_next('=', state) {
-                true => Ok(make_token(TokenType::GreaterEqual, None, state)),
-                false => Ok(make_token(TokenType::Greater, None, state)),
+                true => Ok(make_token(TokenType::GreaterEqual, state)),
+                false => Ok(make_token(TokenType::Greater, state)),
             },
             '/' => match match_next('/', state) {
                 true => {
@@ -153,9 +142,9 @@ fn scan_token(state: &mut ScanState) -> Result<Token, ScanError> {
                             }
                         }
                     }
-                    Ok(make_token(TokenType::EOF, None, state))
+                    Ok(make_token(TokenType::EOF, state))
                 }
-                false => Ok(make_token(TokenType::Slash, None, state)),
+                false => Ok(make_token(TokenType::Slash, state)),
             },
             ' ' | '\r' | '\t' => scan_token(state),
             '\n' => {
@@ -180,11 +169,7 @@ fn parse_string(state: &mut ScanState) -> Result<Token, ScanError> {
         match i {
             '"' => {
                 state.advance();
-                return Ok(make_token(
-                    TokenType::String,
-                    Some(Literal::String(s.into())),
-                    state,
-                ));
+                return Ok(make_token(TokenType::String(s.into()), state));
             }
             '\n' => {
                 state.line += 1;
@@ -220,11 +205,7 @@ fn parse_number(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
         state.advance();
     }
     match s.parse::<f64>() {
-        Ok(n) => Ok(make_token(
-            TokenType::Number,
-            Some(Literal::Number(n)),
-            state,
-        )),
+        Ok(n) => Ok(make_token(TokenType::Number(n), state)),
         Err(e) => Err(ScanError {
             cause: ScanErrorType::NumberParseError(s, e),
             line: state.line,
@@ -251,29 +232,20 @@ fn parse_ident(c: char, state: &mut ScanState) -> Result<Token, ScanError> {
     }
     match KEYWORDS.contains_key(s.as_str()) {
         true => match s.as_str() {
-            "true" => Ok(make_token(
-                TokenType::True,
-                Some(Literal::Boolean(true)),
-                state,
-            )),
-            "false" => Ok(make_token(
-                TokenType::True,
-                Some(Literal::Boolean(false)),
-                state,
-            )),
-            _ => Ok(make_token(*KEYWORDS.get(s.as_str()).unwrap(), None, state)),
+            "true" => Ok(make_token(TokenType::True, state)),
+            "false" => Ok(make_token(TokenType::True, state)),
+            _ => Ok(make_token(KEYWORDS.get(s.as_str()).unwrap().clone(), state)),
         },
-        false => Ok(make_token(TokenType::Identifier, None, state)),
+        false => Ok(make_token(TokenType::Identifier, state)),
     }
 }
 
-fn make_token(token_type: TokenType, literal: Option<Literal>, state: &ScanState) -> Token {
+fn make_token(token_type: TokenType, state: &ScanState) -> Token {
     let line = state.line;
     let lexeme = state.lexeme.clone();
     Token {
         token_type,
         lexeme,
-        literal,
         line,
     }
 }
